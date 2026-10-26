@@ -1,0 +1,85 @@
+# Logseq DB stack for Coolify — sync (SQLite graph DB + assets) + web PWA.
+#
+# Portable across Coolify instances: nothing environment-specific is baked in.
+# Required environment variables (set them in the Coolify service's
+# Environment Variables tab, or an attached .env):
+#
+#   BASE_DOMAIN          Base domain of the deployment, e.g. example.com.
+#                        Hostnames are FIXED as sync.logseq.<BASE_DOMAIN> and
+#                        web.logseq.<BASE_DOMAIN> — only the base domain varies.
+#   DB_SYNC_ADMIN_TOKEN  Admin token for the sync server (`openssl rand -hex 32`).
+#   COGNITO_ISSUER       Logseq's official Cognito issuer  (see upstream docs)
+#   COGNITO_CLIENT_ID    Logseq's official Cognito client id
+#   COGNITO_JWKS_URL     Logseq's official Cognito JWKS url
+#
+# Optional: SYNC_IMAGE, WEB_IMAGE, DB_SYNC_STORAGE_DRIVER, DB_SYNC_ASSETS_DRIVER,
+# DB_SYNC_LOG_LEVEL.
+#
+# Routing: Coolify's API cannot set the Domains field for compose services, so
+# Traefik labels are attached directly (proven shape: plain Host rule, no
+# priority/PathPrefix tweaks) and the containers join the proxy network.
+# `coolify` is the default proxy network name on every Coolify install.
+name: logseq-web-coolify
+
+services:
+  sync:
+    image: ${SYNC_IMAGE:-ghcr.io/yshalsager/logseq-selfhost-sync:latest}
+    environment:
+      DB_SYNC_PORT: "8787"
+      # Must equal the public sync URL exactly; derived from BASE_DOMAIN.
+      DB_SYNC_BASE_URL: https://sync.logseq.${BASE_DOMAIN:?set BASE_DOMAIN, e.g. example.com}
+      DB_SYNC_DATA_DIR: /app/data
+      DB_SYNC_STORAGE_DRIVER: ${DB_SYNC_STORAGE_DRIVER:-sqlite}
+      DB_SYNC_ASSETS_DRIVER: ${DB_SYNC_ASSETS_DRIVER:-filesystem}
+      DB_SYNC_LOG_LEVEL: ${DB_SYNC_LOG_LEVEL:-info}
+      DB_SYNC_ADMIN_TOKEN: ${DB_SYNC_ADMIN_TOKEN:?required}
+      COGNITO_ISSUER: ${COGNITO_ISSUER:?required}
+      COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:?required}
+      COGNITO_JWKS_URL: ${COGNITO_JWKS_URL:?required}
+    volumes:
+      - sync_data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.lqsrv9f3.rule=Host(`sync.logseq.${BASE_DOMAIN}`)
+      - traefik.http.routers.lqsrv9f3.entrypoints=https
+      - traefik.http.routers.lqsrv9f3.tls=true
+      - traefik.http.routers.lqsrv9f3.service=lqsrv9f3
+      - traefik.http.services.lqsrv9f3.loadbalancer.server.port=8787
+    networks:
+      - coolify
+
+  web:
+    image: ${WEB_IMAGE:-ghcr.io/yshalsager/logseq-selfhost-web:latest}
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.lqweb9f3.rule=Host(`web.logseq.${BASE_DOMAIN}`)
+      - traefik.http.routers.lqweb9f3.entrypoints=https
+      - traefik.http.routers.lqweb9f3.tls=true
+      - traefik.http.routers.lqweb9f3.service=lqweb9f3
+      - traefik.http.services.lqweb9f3.loadbalancer.server.port=8080
+    networks:
+      - coolify
+
+networks:
+  coolify:
+    external: true
+
+volumes:
+  sync_data:

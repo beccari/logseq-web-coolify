@@ -1,0 +1,48 @@
+# Logseq DB self-hosted stack — local testing variant (docker compose up).
+# For a Coolify deployment use docker-compose.coolify.yml instead: it wires
+# the Traefik labels and the external `coolify` proxy network, which this
+# file intentionally omits.
+#
+# Reads variables from .env in this directory (see .env.example).
+# Hostname pattern is fixed: sync.logseq.<BASE_DOMAIN> / web.logseq.<BASE_DOMAIN>.
+
+services:
+  sync:
+    image: ${SYNC_IMAGE:-ghcr.io/yshalsager/logseq-selfhost-sync:latest}
+    environment:
+      DB_SYNC_PORT: "8787"
+      # Must equal the public sync URL exactly; derived from BASE_DOMAIN.
+      DB_SYNC_BASE_URL: https://sync.logseq.${BASE_DOMAIN:?set BASE_DOMAIN, e.g. example.com}
+      DB_SYNC_DATA_DIR: /app/data
+      DB_SYNC_STORAGE_DRIVER: ${DB_SYNC_STORAGE_DRIVER:-sqlite}
+      DB_SYNC_ASSETS_DRIVER: ${DB_SYNC_ASSETS_DRIVER:-filesystem}
+      DB_SYNC_LOG_LEVEL: ${DB_SYNC_LOG_LEVEL:-info}
+      DB_SYNC_ADMIN_TOKEN: ${DB_SYNC_ADMIN_TOKEN:?required}
+      COGNITO_ISSUER: ${COGNITO_ISSUER:?required}
+      COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:?required}
+      COGNITO_JWKS_URL: ${COGNITO_JWKS_URL:?required}
+    volumes:
+      - sync_data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  web:
+    image: ${WEB_IMAGE:-ghcr.io/yshalsager/logseq-selfhost-web:latest}
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  sync_data:
